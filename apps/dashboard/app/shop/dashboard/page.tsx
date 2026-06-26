@@ -214,8 +214,16 @@ export default function Dashboard() {
                 </div>
                 <div className="border rounded-xl p-6 flex flex-col items-center justify-center text-center">
                   <h3 className="font-bold mb-4">Shop QR Code</h3>
-                  {qrDataUrl && <img src={qrDataUrl} alt="QR Code" className="w-48 h-48 mb-6 border p-2 rounded-lg bg-white shadow-sm" />}
-                  <a href={qrDataUrl} download={`QR_${shop?.qr_code_id}.png`} className="text-primary font-bold hover:underline border-2 border-primary px-6 py-2 rounded-xl transition hover:bg-primary/5">
+                  {qrDataUrl && <img src={qrDataUrl} alt="QR Code" className="w-48 h-48 mb-4 border p-2 rounded-lg bg-white shadow-sm" />}
+                  
+                  {shop?.qr_code_id && (
+                    <div className="bg-primary/10 border border-primary/20 rounded-xl px-4 py-3 mb-6 w-full max-w-[220px]">
+                      <p className="text-xs text-gray-500 font-medium mb-1 uppercase tracking-wider">Manual Code</p>
+                      <p className="text-2xl font-black text-primary tracking-[0.2em]">{shop.qr_code_id}</p>
+                    </div>
+                  )}
+
+                  <a href={qrDataUrl} download={`QR_${shop?.qr_code_id}.png`} className="text-primary font-bold hover:underline border-2 border-primary px-6 py-2 rounded-xl transition hover:bg-primary/5 w-full max-w-[220px]">
                     Download & Print
                   </a>
                 </div>

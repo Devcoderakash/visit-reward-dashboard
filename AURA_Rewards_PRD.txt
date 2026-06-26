@@ -1,0 +1,224 @@
+
+AURA REWARDS
+Product Requirements Document
+A Universal Loyalty &amp; Rewards Platform for Local Businesses
+
+Version 1.0
+June 2026
+Status: Draft for Development
+
+Table of Contents
+
+
+
+1. Executive Summary
+AURA Rewards is a universal customer loyalty platform that connects local businesses — cafes, juice bars, restaurants, salons, and bakeries — with their customers through a single mobile app and a single web dashboard. Instead of every business building its own loyalty app, AURA gives customers one app to collect visits, rewards, and surprises across every shop they frequent, while giving business owners a simple way to track repeat customers and grow their Google reviews.
+The core mechanic is visit-based: a customer scans a static QR code at the shop counter once per visit. After five visits, the app unlocks a scratch card with a randomized reward — a mechanic chosen deliberately over a flat points system because variable rewards create stronger anticipation and repeat-visit behavior than predictable point accumulation.
+The product ships as two connected applications sharing one backend: a Customer App (mobile-first web app) and a Shop Dashboard (business owner web app), backed by a shared Supabase database.
+
+2. Problem Statement
+2.1 For Local Businesses
+	•	No affordable way to run a loyalty program without building custom software
+	•	Low repeat-visit rate — most local businesses see a customer once and never again
+	•	Few Google reviews, which directly hurts local discovery and ranking
+	•	No structured customer data — owners don't know who their repeat customers are
+2.2 For Customers
+	•	Unwilling to install a separate app for every shop they visit
+	•	Loyalty cards (paper or app-based) get lost, forgotten, or abandoned
+	•	No excitement in traditional points systems — points feel like a spreadsheet, not a reward
+
+3. Product Vision & Goals
+One customer app. One business dashboard. Unlimited businesses. Unlimited customers.
+3.1 Primary Goals
+	•	Give any local business a working loyalty program in under 10 minutes, with zero technical setup beyond filling a form and printing a QR code.
+	•	Give customers a single app where visiting any participating shop earns progress toward a reward — no separate sign-ups, no separate cards.
+	•	Increase repeat-visit rate and Google review volume for participating businesses, measurably, within the first 60 days of use.
+3.2 Non-Goals (Out of Scope for V1)
+	•	Payments or point-of-sale integration
+	•	Dynamic/rotating QR codes or NFC-based check-in
+	•	Multi-branch chains with centralized loyalty pooling (single branch only in V1)
+	•	Native iOS/Android apps (V1 is a mobile-responsive web app for demo and pilot purposes)
+
+4. User Personas
+4.1 Customer — “Rahul, 27, office-goer”
+Visits 3-4 local food and beverage spots regularly. Owns multiple loyalty cards he never carries. Wants recognition for being a repeat customer without extra effort. Motivated by surprise and small wins, not spreadsheets.
+4.2 Shop Owner — “Mama Juice Bar, single counter, Indore”
+Runs a single-location juice shop. Has no developer and no budget for custom software. Wants more repeat customers and more Google reviews, but has no time to manage anything complicated. Needs something that works by printing one piece of paper.
+
+5. Core User Flows
+5.1 Shop Owner Onboarding
+	•	Owner visits the Shop Dashboard website and registers (shop name, category, address, hours, social links).
+	•	System generates a unique static QR code tied to a Shop ID (e.g. MAMA001).
+	•	Owner downloads and prints the QR code, places it at the billing counter.
+	•	Dashboard is immediately live — ready to receive visits.
+5.2 Customer Onboarding
+	•	Customer downloads/opens the AURA web app.
+	•	Signs up with name + mobile number, verified via OTP.
+	•	Sees a short welcome screen explaining the scan-to-earn mechanic.
+	•	Lands on the Home screen with a prominent “Scan QR” action, styled after familiar UPI-style scan flows.
+5.3 Visit & Check-In Flow (Core Loop)
+Every QR scan triggers the following server-side logic, in order:
+	•	Has this customer already checked in at this shop today? If yes → show a friendly block message (“Already visited today, come back tomorrow!”); no visit is recorded.
+	•	If not yet visited today → increment visit count by 1 for that customer-shop pair.
+	•	Check consecutive-day streak. If the customer has visited 5 days in a row, flag this visit for a streak bonus (guaranteed premium reward on next scratch card).
+	•	Check if total visits for this shop just reached a multiple of 5 (the configurable reward threshold). If yes → generate a scratch card with a random reward and a time-limited 4-digit redemption code; if no → simply update the visit progress bar.
+Design principle: every scan produces exactly one of four outcomes — first-time connection, returning visit, already-visited-today block, or reward unlock. The customer should never see an ambiguous or unexplained state.
+5.4 Reward Redemption Flow
+	•	Customer taps the unlocked scratch card and scratches to reveal the reward.
+	•	App displays a 4-digit redemption code, valid for a limited window (default: 10 minutes for the code, 7 days for the underlying reward).
+	•	Customer shows this code to shop staff.
+	•	Staff enters the code into the Shop Dashboard's “Verify Code” screen.
+	•	System checks the code against the database: valid + unexpired + unused → reward confirmed and marked redeemed. Invalid/expired → clear error shown, no reward given.
+5.5 Google Review Flow
+	•	On the shop profile screen, a customer who has visited at least once sees a “Rate us on Google” button.
+	•	Customer taps it and selects a 1-5 star rating inside the app.
+	•	If 4-5 stars: the system calls an AI service to generate three unique review suggestions based on the shop's name and category. The customer picks one, it is auto-copied to the clipboard, and the customer is redirected to the shop's public Google review page to paste and submit.
+	•	If 1-3 stars: no redirect to Google occurs. Instead, a private feedback form opens, and the submission is routed only to the shop owner's dashboard — protecting the shop's public rating while still surfacing real feedback.
+This flow is designed to protect a business's public reputation while still collecting honest feedback — a pattern used by most reputation-management tools.
+
+6. Feature List by Module
+6.1 Customer App
+Feature
+Description
+Sign up / OTP login
+Name + mobile number, OTP verification via Supabase Auth
+Home dashboard
+List of joined shops, each with visit count and progress bar
+QR scanner
+In-app camera scanner; static QR encodes a Shop ID
+Visit confirmation states
+First connection, returning visit, already-visited-today block, reward unlock
+Shop profile page
+Visits, rewards, progress, address, hours, social links, Google review button
+Scratch card
+Unlocks every 5 visits; tap-to-reveal animation; shows redemption code
+Streak bonus
+5 consecutive daily visits upgrades the next scratch card reward
+Google review assistant
+AI-suggested reviews for 4-5 star ratings; private feedback form for 1-3 stars
+
+6.2 Shop Dashboard
+Feature
+Description
+Registration
+Shop name, category, address, hours, social links → auto-generates QR code
+Overview tab
+Total customers, active-this-week count, rewards redeemed, repeat-visit rate
+Live visit feed
+Real-time list of recent check-ins with customer name and timestamp
+Verify code tab
+Staff enters a customer's 4-digit code to confirm and mark a reward redeemed
+Customers tab
+Table of all customers with visit count, progress, and redemption history
+Analytics tab
+Daily visit chart, retention breakdown (1 visit / 2-4 visits / 5+ visits), top customers
+Private feedback inbox
+Anonymous 1-3 star feedback routed here instead of to Google
+QR code management
+Download and print the static QR code tied to the shop's unique ID
+
+7. Fraud Prevention Logic (V1 / MVP)
+The MVP intentionally avoids complex anti-fraud mechanisms (no dynamic QR rotation, no PIN entry, no waiting timers) in favor of three simple, durable rules:
+	•	Static QR per shop — the code never changes, so it can simply be printed and never reissued.
+	•	One rewarded visit per customer per shop per day — enforced server-side, not client-side, so it cannot be bypassed by clearing app data.
+	•	Time-limited, single-use redemption codes — each scratch card reward generates a 4-digit code that expires quickly and is marked used immediately on redemption, preventing screenshot-sharing abuse.
+GPS-based proximity verification was considered for V1 but is deferred — it adds meaningful complexity (location permissions, GPS accuracy issues indoors) for a fraud vector that the daily-limit and time-limited-code rules already substantially mitigate at this stage.
+
+8. Technical Architecture
+8.1 Stack Overview
+Layer
+Technology
+Customer App
+Next.js + Tailwind CSS (mobile-first responsive web app)
+Shop Dashboard
+Next.js + Tailwind CSS (desktop-first responsive web app)
+Backend / Database
+Supabase (PostgreSQL, Auth, Realtime, Row Level Security)
+Authentication
+Supabase Auth — OTP for customers, email/password for shop owners
+AI Review Generation
+OpenAI API
+QR Generation
+qrcode npm library
+QR Scanning
+react-qr-reader (device camera)
+Charts / Analytics
+Recharts
+
+8.2 Data Model (Core Tables)
+Table
+Purpose
+users
+Customer and shop-owner identity (name, mobile, auth link)
+shops
+Shop profile: name, category, address, hours, social links, QR ID, reward threshold
+customer_shop
+Join table tracking visits, last visit date, streak count, review status per customer-shop pair
+scratch_cards
+Generated rewards: reward text, redemption code, expiry, redeemed status
+private_feedback
+1-3 star feedback routed privately to shop owners
+
+8.3 Key API Endpoints
+	•	POST /api/visit — processes a QR scan: validates daily limit, increments visit count, checks streak, triggers scratch card generation at threshold
+	•	POST /api/verify-code — validates a redemption code against the shop and marks it redeemed
+	•	POST /api/generate-review — calls the AI service to produce three review suggestions for a given shop and star rating
+
+9. Success Metrics
+Metric
+Target (60 days)
+Measured Via
+Repeat-visit rate per shop
+≥ 40%
+customer_shop visit counts
+Customers reaching 5+ visits
+≥ 20% of joined customers
+customer_shop visit counts
+Google reviews generated
+≥ 15 per active shop
+Review flow completion events
+Reward redemption rate
+≥ 70% of unlocked scratch cards
+scratch_cards table
+Shop onboarding time
+≤ 10 minutes
+Registration-to-live-QR timestamp delta
+
+10. Monetization Model
+AURA charges businesses, not customers. Three subscription tiers, billed monthly:
+Plan
+Price
+Includes
+Starter
+₹499/month
+Single branch, core loyalty + scratch card features
+Growth
+₹999/month
+Up to 5 branches, full analytics
+Premium
+₹1999/month
+Unlimited branches, AI reviews, advanced analytics, marketing tools
+
+Future consideration: a free single-branch tier (capped customer count) to reduce onboarding friction, and a per-redemption transaction fee model as an alternative to flat subscriptions — both noted as open questions for pricing validation, not committed for V1.
+
+11. Phased Rollout Plan
+Phase
+Scope
+Phase 1
+Supabase schema setup: users, shops, customer_shop, scratch_cards, private_feedback tables with Row Level Security policies
+Phase 2
+Customer App: sign-up, home dashboard, QR scanner, shop profile, scratch card reveal, Google review flow
+Phase 3
+Core API logic: visit processing, code verification, AI review generation
+Phase 4
+Shop Dashboard: registration, overview, live feed, code verification, customer table, analytics
+Phase 5
+End-to-end integration testing across both apps against the shared Supabase backend; bug fixes
+
+This document defines what is being built and why. The corresponding build prompts (used with Claude/Antigravity for implementation) map directly to the five phases above.
+
+12. Open Questions & Risks
+	•	Pricing validation — will single-branch owners pay ₹499/month without a free trial period?
+	•	Fraud ceiling — daily-limit-only fraud prevention may need GPS verification added in V2 if abuse is observed in pilot.
+	•	Review-flow compliance — routing only positive ratings to Google must be reviewed against Google's review-gating policies before wide rollout.
+	•	Multi-branch support — V1 treats every branch as an independent shop; a future version may need centralized loyalty pooling across branches of the same brand.

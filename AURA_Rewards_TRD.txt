@@ -1,0 +1,450 @@
+
+AURA REWARDS
+Technical Requirements Document
+System Architecture, Data Model, and API Specification
+
+Version 1.0
+June 2026
+Companion document to AURA Rewards PRD v1.0
+
+Table of Contents
+
+
+
+1. Purpose & Scope
+This document specifies the technical implementation of AURA Rewards: the database schema, API contracts, authentication model, third-party integrations, and system-level logic required to build the Customer App and Shop Dashboard described in the companion PRD.
+Audience: engineers implementing the system (directly, or via Claude/Antigravity prompt-driven builds), and anyone reviewing technical feasibility, security, or data design before pilot launch.
+
+2. System Architecture
+2.1 High-Level Architecture
+AURA consists of two independent Next.js front-ends sharing one Supabase backend. No server is maintained outside of Supabase and Next.js API routes — there is no separate backend service.
+                         +-------------------------+
+                         |        Supabase         |
+                         |  (Postgres + Auth +      |
+                         |   Realtime + RLS)        |
+                         +------------+-------------+
+                                      |
+          +---------------------------+---------------------------+
+          |                                                       |
++---------v----------+                                  +---------v----------+
+|   Customer App      |                                  |   Shop Dashboard    |
+|   (Next.js)         |                                  |   (Next.js)         |
+|                      |                                  |                      |
+|  /signup             |                                  |  /shop/register      |
+|  /home               |                                  |  /shop/login         |
+|  /scan               |                                  |  /shop/dashboard     |
+|  /shop/[id]          |  -- API routes also live here -->|    - Overview        |
+|  /scratch-card/[id]  |     (/api/visit, /api/verify-     |    - Verify Code     |
+|  /review/[shop_id]   |      code, /api/generate-review)  |    - Customers       |
+|                      |                                  |    - Analytics       |
++----------------------+                                  +----------------------+
+          |                                                       |
+          +---------------------- OpenAI API ---------------------+
+                       (review suggestion generation only)
+2.2 Why Two Separate Front-Ends, One Backend
+	•	Customer App and Shop Dashboard have entirely different audiences, auth methods, and UI density — splitting them avoids one bloated codebase with conditional rendering for two very different user types.
+	•	Both read/write the same Supabase tables, so data is always consistent in real time across both apps without any sync layer.
+	•	API routes for shared logic (/api/visit, /api/verify-code, /api/generate-review) can live in either app's Next.js project, but are documented here as logically backend-owned, callable from both front-ends if needed.
+
+3. Data Model
+3.1 Entity Relationship Overview
+users (1) ----------< customer_shop >---------- (1) shops
+  |                        |                        |
+  |                        |                        |
+  +--< scratch_cards >-----+                        |
+  |                                                  |
+  +--< private_feedback >---------------------------+
+3.2 Table: users
+Extends Supabase's built-in auth.users via a 1:1 profile table.
+Column
+Type
+Constraints
+Notes
+id
+uuid
+PK, references auth.users(id)
+
+name
+text
+NOT NULL
+
+mobile
+text
+UNIQUE, NOT NULL
+E.164 format, e.g. +919876543210
+role
+text
+NOT NULL, default 'customer'
+'customer' or 'shop_owner'
+created_at
+timestamptz
+default now()
+
+
+3.3 Table: shops
+Column
+Type
+Constraints
+Notes
+id
+uuid
+PK, default gen_random_uuid()
+
+owner_id
+uuid
+FK → users.id, NOT NULL
+
+name
+text
+NOT NULL
+
+description
+text
+
+
+category
+text
+NOT NULL
+juice_shop | cafe | restaurant | bakery | salon | other
+address
+text
+
+
+opening_hours
+text
+
+
+instagram
+text
+
+
+whatsapp
+text
+
+
+website
+text
+
+
+qr_code_id
+text
+UNIQUE, NOT NULL
+e.g. MAMA001 — encoded into the printed QR
+visits_required
+int
+default 5
+Configurable reward threshold
+created_at
+timestamptz
+default now()
+
+
+3.4 Table: customer_shop
+The core join table. One row per (customer, shop) pair — this is where visit counts, streaks, and review status live.
+Column
+Type
+Constraints
+Notes
+id
+uuid
+PK, default gen_random_uuid()
+
+customer_id
+uuid
+FK → users.id, NOT NULL
+
+shop_id
+uuid
+FK → shops.id, NOT NULL
+
+total_visits
+int
+default 0
+
+last_visit_date
+date
+nullable
+Used to enforce one-visit-per-day
+streak_count
+int
+default 0
+Consecutive daily visits
+review_submitted
+boolean
+default false
+
+created_at
+timestamptz
+default now()
+
+(constraint)
+
+UNIQUE (customer_id, shop_id)
+Enforces one row per relationship
+
+3.5 Table: scratch_cards
+Column
+Type
+Constraints
+Notes
+id
+uuid
+PK, default gen_random_uuid()
+
+customer_id
+uuid
+FK → users.id, NOT NULL
+
+shop_id
+uuid
+FK → shops.id, NOT NULL
+
+reward_text
+text
+NOT NULL
+e.g. 'Free Mango Shake', '10% OFF'
+redemption_code
+text
+UNIQUE, NOT NULL
+4-char alphanumeric, case-insensitive
+is_revealed
+boolean
+default false
+True once customer scratches the card
+is_redeemed
+boolean
+default false
+True once staff confirms
+expires_at
+timestamptz
+NOT NULL
+now() + 7 days at creation
+created_at
+timestamptz
+default now()
+
+
+3.6 Table: private_feedback
+Column
+Type
+Constraints
+Notes
+id
+uuid
+PK, default gen_random_uuid()
+
+customer_id
+uuid
+FK → users.id, NOT NULL
+
+shop_id
+uuid
+FK → shops.id, NOT NULL
+
+star_rating
+int
+NOT NULL, CHECK 1-3
+Only 1-3 star ratings land here
+feedback_text
+text
+
+
+created_at
+timestamptz
+default now()
+
+
+4. Row Level Security (RLS) Policy Design
+All tables have RLS enabled. Policies follow the principle that customers can only read/write their own rows, and shop owners can only read/write data belonging to shops they own.
+Table
+Policy
+Rule
+users
+select_own
+auth.uid() = id
+shops
+select_all
+Public read — anyone can view shop profiles
+shops
+modify_own
+auth.uid() = owner_id, for INSERT/UPDATE/DELETE
+customer_shop
+select_own_or_owner
+auth.uid() = customer_id OR auth.uid() = (SELECT owner_id FROM shops WHERE id = shop_id)
+customer_shop
+insert_via_api_only
+Inserts/updates routed through service-role API route, not direct client writes, to enforce the daily-visit-limit rule server-side
+scratch_cards
+select_own_or_owner
+Same pattern as customer_shop
+scratch_cards
+no_client_insert
+Rows are created only by the /api/visit route using the service role key
+private_feedback
+insert_own
+auth.uid() = customer_id, INSERT only
+private_feedback
+select_owner_only
+Only the owning shop's owner can SELECT — never the submitting customer or any other shop
+
+Critical rule: visit increments, streak updates, and scratch-card creation must never happen via a direct client-side Supabase insert/update. All of that logic lives in /api/visit, called with the Supabase service role key, so a customer cannot edit their own visit count by manipulating client requests.
+
+5. API Specification
+5.1 POST /api/visit
+Processes a QR scan. This is the single most important endpoint in the system — it owns all visit, streak, and reward-unlock logic.
+Request
+{
+  "shop_qr_id": "MAMA001",
+  "customer_id": "uuid"
+}
+Server-side logic (in order)
+	•	Look up shop by qr_code_id. If not found → 404.
+	•	Find or create the customer_shop row for (customer_id, shop_id).
+	•	If customer_shop.last_visit_date = today → return status "already_visited", no further changes.
+	•	Else: increment total_visits by 1, set last_visit_date = today.
+	•	Streak check: if last_visit_date was yesterday → streak_count += 1; else → streak_count = 1.
+	•	Reward check: if total_visits % visits_required = 0 → generate a scratch card (see 5.1.1) and return status "scratch_card_unlocked".
+	•	Else → return status "visit_recorded" (or "first_visit" if this was the customer's first-ever visit to this shop).
+5.1.1 Reward generation sub-logic
+	•	redemption_code: random 4-character alphanumeric string, uppercase, checked for uniqueness against existing unexpired codes
+	•	reward_text: if streak_count >= 5 → fixed premium reward (e.g. "Premium Combo — Streak Bonus!"); else → randomly selected from the shop's configured reward pool
+	•	expires_at: now() + 7 days
+Response
+{
+  "status": "visit_recorded" | "already_visited" |
+            "scratch_card_unlocked" | "first_visit",
+  "visits": 3,
+  "shop": { "id": "uuid", "name": "Mama Juice Bar" },
+  "scratch_card_id": "uuid | null"
+}
+
+5.2 POST /api/verify-code
+Called from the Shop Dashboard's “Verify Code” screen when staff enters a customer's redemption code.
+Request
+{
+  "redemption_code": "7X4K",
+  "shop_id": "uuid"
+}
+Server-side logic
+	•	Find scratch_card matching redemption_code AND shop_id.
+	•	If not found → return { valid: false, reason: "not_found" }.
+	•	If is_redeemed = true → return { valid: false, reason: "already_redeemed" }.
+	•	If expires_at < now() → return { valid: false, reason: "expired" }.
+	•	Otherwise → set is_redeemed = true, return success with customer name and reward_text.
+Response
+{
+  "valid": true,
+  "customer_name": "Rahul Sharma",
+  "reward_text": "Free Mango Shake"
+}
+// or
+{
+  "valid": false,
+  "reason": "expired" | "already_redeemed" | "not_found"
+}
+
+5.3 POST /api/generate-review
+Calls OpenAI to generate three review suggestions, used only when a customer rates 4 or 5 stars.
+Request
+{
+  "shop_name": "Mama Juice Bar",
+  "shop_category": "juice_shop",
+  "stars": 5
+}
+Server-side logic
+	•	Construct a prompt instructing the model to return exactly 3 unique, natural-sounding reviews (2-3 sentences each), varied in tone, as a JSON array of strings only.
+	•	Call OpenAI's chat completion endpoint with this prompt.
+	•	Parse the response as JSON. If parsing fails, retry once with a stricter “return only JSON” instruction before failing.
+	•	Return the 3 reviews to the client. Do not persist them — they are generated fresh per request.
+Response
+{
+  "reviews": [
+    "Review text 1...",
+    "Review text 2...",
+    "Review text 3..."
+  ]
+}
+Rate limiting: this endpoint should be called at most once per customer per shop per review attempt. The client should cache the 3 returned reviews in component state rather than re-calling on every star re-selection.
+
+5.4 POST /api/submit-feedback
+Called when a customer submits a 1-3 star private feedback form.
+Request
+{
+  "customer_id": "uuid",
+  "shop_id": "uuid",
+  "star_rating": 2,
+  "feedback_text": "Service was slow today."
+}
+Server-side logic
+	•	Insert a row into private_feedback.
+	•	Set customer_shop.review_submitted = true for this (customer_id, shop_id) pair, to prevent repeat review prompts.
+Response
+{ "success": true }
+
+6. Authentication & Session Model
+6.1 Customer Authentication
+	•	Method: Supabase phone-based OTP auth
+	•	Flow: customer enters mobile number → Supabase sends OTP via SMS → customer enters code → Supabase issues a session JWT
+	•	On first successful verification, a corresponding row is created in the users table with role = 'customer'
+6.2 Shop Owner Authentication
+	•	Method: Supabase email + password auth
+	•	Flow: standard sign-up/sign-in; on sign-up, a users row is created with role = 'shop_owner', followed by shop registration
+6.3 Protected Routes
+Both apps must check for a valid Supabase session before rendering authenticated pages, redirecting to the relevant login screen otherwise.
+Route prefix
+Required role
+/home, /scan, /shop/[id], /scratch-card/*, /review/*
+customer
+/shop/dashboard/*
+shop_owner, and owner_id must match the shop being viewed
+
+7. Third-Party Integrations
+Service
+Used For
+Notes
+Supabase
+Database, Auth, Realtime, RLS
+Single source of truth for all data; service role key used only in server-side API routes, never exposed to the client
+OpenAI API
+AI-generated review suggestions
+Called only from /api/generate-review; API key stored as a server-only environment variable
+qrcode (npm)
+Generating the shop's static QR image
+Encodes a URL such as aura-rewards.com/scan?shop=MAMA001
+react-qr-reader
+Customer app camera-based QR scanning
+Reads the encoded shop URL and extracts the qr_code_id
+Recharts
+Shop dashboard analytics charts
+Daily visits bar chart, retention breakdown
+
+8. Environment Variables
+# Public (safe to expose to the browser)
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+ 
+# Server-only (never expose to the client)
+SUPABASE_SERVICE_ROLE_KEY=
+OPENAI_API_KEY=
+
+SUPABASE_SERVICE_ROLE_KEY and OPENAI_API_KEY must only be referenced inside Next.js API routes (server-side), never inside client components, never prefixed with NEXT_PUBLIC_.
+
+9. Non-Functional Requirements
+Requirement
+Target
+QR scan → visit confirmation latency
+Under 2 seconds end-to-end on a typical 4G connection
+Dashboard live-feed update
+Realtime subscription, under 3 seconds from visit to feed update
+Redemption code collision rate
+Effectively zero — uniqueness checked against active (unexpired, unredeemed) codes at generation time
+Mobile responsiveness
+Customer App must render correctly on screens as narrow as 360px width
+Data isolation
+A shop owner must never be able to query another shop's customer or feedback data, enforced by RLS, not just UI hiding
+
+10. Known Limitations (V1)
+	•	No GPS-based proximity verification — a determined customer could scan a photo of the QR code remotely; the daily-visit-limit and time-limited redemption codes are the only mitigations in V1.
+	•	No device fingerprinting — a customer could create multiple accounts on the same device to farm first-visit bonuses (not currently rewarded, so impact is low, but noted for future hardening).
+	•	OpenAI review generation has no persistent caching — every 4-5 star rating triggers a fresh API call; at scale this should be monitored for cost and latency.
+	•	Single-branch model only — a business with multiple locations must register each branch as a fully separate shop with its own QR code and its own visit counts in V1.

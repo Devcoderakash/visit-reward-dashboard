@@ -1,0 +1,291 @@
+
+AURA REWARDS
+App Flow Document
+Screen-by-Screen Flow for the Customer App and Shop Dashboard
+
+Version 1.0
+June 2026
+Companion document to AURA Rewards PRD &amp; TRD v1.0
+
+Table of Contents
+
+
+
+1. Overview
+This document maps every screen in AURA Rewards, what each screen does, what the user sees, and exactly where each action leads next. It covers two separate applications that share one backend: the Customer App and the Shop Dashboard.
+Use this document alongside the TRD (for API contracts and data model) and the PRD (for product rationale). This document answers one question only: “when the user is on screen X and does Y, what happens next?”
+1.1 Flow Map Legend
+Color
+Meaning
+Purple
+Customer App — onboarding & navigation screens
+Teal
+Customer App — visit confirmation & success states
+Amber
+Customer App — reward & scratch card screens
+Coral
+Shop Dashboard — owner-facing screens
+
+2. Customer App — Entry & Onboarding Flow
+This is a one-time flow. A returning customer with an active session skips straight to Screen 3 (Home).
+Screen 1 — Sign Up
+/signup
+Purpose: Capture a new customer's identity and verify their mobile number before granting access to the app.
+Key elements:
+	•	Name input field
+	•	Mobile number input with +91 prefix
+	•	4-digit OTP input, sent via Supabase phone auth
+	•	“Verify & Continue” primary button
+Leads to: On successful OTP verification → Screen 2 (Welcome). On first verification ever, a row is created in the users table.
+
+Screen 2 — Welcome
+/welcome
+Purpose: One-time orientation screen explaining the core mechanic before the customer starts using the app.
+Key elements:
+	•	Two info tiles: “Scan a shop QR to start” and “5 visits = scratch card”
+	•	“Get started” primary button
+Leads to: Tap “Get started” → Screen 3 (Home). This screen is shown only once per account.
+
+3. Customer App — Core Navigation & Visit Loop
+This is the flow a customer repeats on every visit to every shop. It is the heart of the product.
+Screen 3 — Home
+/home
+Purpose: Central hub showing every shop the customer has joined, with live progress toward each shop's next scratch card.
+Key elements:
+	•	Greeting + total shops joined + total scratch cards earned (top stats)
+	•	Prominent “Scan QR” icon button, top-right (UPI-style)
+	•	One card per joined shop: name, category, visit count chip, progress bar (X/5)
+	•	Dashed “Scan new shop QR to add” card at the bottom
+Leads to: Tap QR icon or dashed card → Screen 4 (Scan QR). Tap any shop card → Screen 5 (Shop Profile).
+
+Screen 4 — Scan QR
+/scan
+Purpose: Full-screen camera scanner that reads a shop's static QR code and triggers the visit logic.
+Key elements:
+	•	Live camera viewfinder (react-qr-reader)
+	•	On successful decode → calls POST /api/visit with the extracted shop_qr_id
+	•	Loading state while the API call resolves
+Leads to: Based on the API response status, branches into one of four outcomes — see Section 4 below.
+
+Screen 5 — Shop Profile
+/shop/[id]
+Purpose: Detailed view of one specific shop the customer has joined — progress, details, and the review entry point.
+Key elements:
+	•	Cover image + shop logo + “Joined” badge
+	•	3 stat boxes: Visits, Rewards, Visits Left
+	•	Progress bar toward next scratch card
+	•	Shop details: address, opening hours
+	•	Social links: Instagram, WhatsApp, Website (open externally)
+	•	“Rate us on Google” button (visible only after ≥ 1 visit)
+Leads to: Tap a social link → opens externally in a new tab. Tap “Rate us on Google” → Screen 9 (Google Review). Back button → Screen 3 (Home).
+
+4. Visit Outcome Branches (Post-Scan Logic)
+Every QR scan resolves to exactly one of four states. This section documents each as its own screen state, since the UI shown is meaningfully different in each case.
+Screen 4a — Connected! (First Visit)
+/scan → confirmation overlay
+Purpose: Shown the very first time a customer scans a particular shop's QR code.
+Key elements:
+	•	Green checkmark icon
+	•	“Connected!” heading + shop name
+	•	Progress bar showing 1/5
+	•	“Go to home” button
+Leads to: Tap “Go to home” → Screen 3 (Home), now showing this shop's new card.
+
+Screen 4b — Welcome Back (Returning Visit)
+/scan → confirmation overlay
+Purpose: Shown on the 2nd, 3rd, or 4th visit to a shop the customer has already joined.
+Key elements:
+	•	Heart icon
+	•	“Welcome back!” heading + shop name
+	•	Updated progress bar (e.g. 3/5)
+	•	“Go to home” button
+Leads to: Tap “Go to home” → Screen 3 (Home) with updated progress.
+
+Screen 4c — Already Visited Today
+/scan → confirmation overlay
+Purpose: Shown when the customer scans the same shop's QR a second time on the same calendar day. No visit is recorded.
+Key elements:
+	•	Clock icon
+	•	“Aaj ki visit ho gayi!” heading
+	•	Explanation: one visit counts per day
+	•	Current progress bar shown unchanged
+	•	Next eligible visit time displayed
+	•	“Okay, got it” button
+Leads to: Tap button → Screen 3 (Home). No backend state changes — this is a pure block state.
+
+Screen 4d — 5 Visits Complete → Scratch Card Unlocked
+/scratch-card/[id]
+Purpose: Shown automatically when a visit causes the customer to cross the 5-visit threshold for that shop.
+Key elements:
+	•	Gift icon + “5 visits complete!” heading
+	•	Scratchable card surface (tap-to-reveal interaction)
+	•	On reveal: reward text + 4-digit redemption code
+	•	Code validity countdown (10 minutes) and reward validity note (7 days)
+Leads to: See Section 5 (Reward Redemption Flow) for what happens after this screen.
+
+5. Reward Redemption Flow
+Continues directly from Screen 4d. This flow involves both the Customer App and the Shop Dashboard.
+Customer App                          Shop Dashboard
+-------------                          --------------
+Scratch card revealed
+4-digit code shown   ---- shows code -->  Staff types code into
+(e.g. 7X4K)            to staff in person   Verify Code screen
+                                             |
+                                             v
+                                       POST /api/verify-code
+                                             |
+                              +--------------+--------------+
+                              |                              |
+                         valid + unused              invalid / expired /
+                         + unexpired                 already redeemed
+                              |                              |
+                              v                              v
+                   Reward confirmed,                 Red error shown,
+                   is_redeemed = true                no state change
+                   Customer receives item
+From the customer's side, once the staff confirms verbally that the reward has been given, the customer simply taps “Back to home” or navigates back to Screen 3. No further customer-side confirmation step is required — the redemption record lives entirely on the dashboard side once verified.
+
+6. Google Review Flow
+Entered only from Screen 5 (Shop Profile) via the “Rate us on Google” button.
+Screen 9 — Star Rating
+/review/[shop_id]
+Purpose: First step of the review flow. Customer selects how many stars to give the shop.
+Key elements:
+	•	Google logo
+	•	“Rate [Shop Name]” heading
+	•	5 tappable stars
+	•	Label updates live as stars are tapped (Poor / Fair / Good / Great / Excellent!)
+Leads to: Selecting a star auto-advances after a short delay. 4-5 stars → Screen 10a. 1-3 stars → Screen 10b.
+
+Screen 10a — AI Review Suggestions (4-5 stars)
+/review/[shop_id] — step 2
+Purpose: Shown only for positive ratings. Generates AI review text so the customer doesn't have to write one from scratch.
+Key elements:
+	•	Note: “AI ne yeh reviews suggest kiye hain”
+	•	3 tappable review suggestion cards (from POST /api/generate-review)
+	•	On tap: review auto-copies to clipboard, “Copied!” confirmation shown
+	•	“Open Google Reviews” button appears after a suggestion is picked
+Leads to: Tap “Open Google Reviews” → opens the shop's public Google review page in a new tab. Customer pastes and submits there — outside the AURA app.
+
+Screen 10b — Private Feedback Form (1-3 stars)
+/review/[shop_id] — step 2 (alt)
+Purpose: Shown only for critical ratings. Keeps negative feedback off the shop's public Google profile while still routing it to the owner.
+Key elements:
+	•	Message icon + “Thanks for your feedback” heading
+	•	Free-text feedback field
+	•	Submit sends to POST /api/submit-feedback, never to Google
+Leads to: On submit → confirmation message shown → “Back to profile” → Screen 5 (Shop Profile). Sets review_submitted = true either way, preventing repeat prompts.
+
+7. Shop Dashboard — Onboarding Flow
+Screen 1 — Shop Registration
+/shop/register
+Purpose: One-time setup. Owner provides shop details and the system generates a permanent static QR code.
+Key elements:
+	•	Shop name, description, category (dropdown)
+	•	Address, opening hours
+	•	Instagram, WhatsApp, website fields
+	•	“Create shop” button
+Leads to: On submit → shop row created, qr_code_id auto-generated → redirect to Screen 3 (Dashboard Overview) with the new QR ready to download.
+
+Screen 2 — Shop Login
+/shop/login
+Purpose: Standard returning-owner authentication.
+Key elements:
+	•	Email field
+	•	Password field
+	•	“Log in” button
+Leads to: On success → Screen 3 (Dashboard Overview) for that owner's shop.
+
+8. Shop Dashboard — Main Screens
+The dashboard is a single page with four tabs. Switching tabs does not reload the page — all four are part of one continuous screen.
+Screen 3 — Overview Tab
+/shop/dashboard (tab: overview)
+Purpose: Default landing tab after login. Gives the owner an at-a-glance health check of their loyalty program.
+Key elements:
+	•	4 metric cards: Total Customers, Active This Week, Rewards Redeemed, Repeat Rate
+	•	Live visit feed: most recent check-ins with customer name + time-ago, updated via Supabase Realtime
+	•	QR code preview + “Download & print” button
+Leads to: Tab switch → Verify Code, Customers, or Analytics tab (same page, no navigation).
+
+Screen 4 — Verify Code Tab
+/shop/dashboard (tab: verify)
+Purpose: Used by counter staff dozens of times a day — the most frequently visited tab after a customer reaches 5 visits.
+Key elements:
+	•	Large 4-character code input field
+	•	Auto-validates via POST /api/verify-code once 4 characters are entered
+	•	Green result card: customer name + reward text + “Confirm Redemption” button
+	•	Red result card: “Invalid or expired code” for failed lookups
+Leads to: Tap “Confirm Redemption” → marks scratch_cards.is_redeemed = true, input clears, ready for the next customer.
+
+Screen 5 — Customers Tab
+/shop/dashboard (tab: customers)
+Purpose: Owner's view of every customer who has ever scanned this shop's QR code.
+Key elements:
+	•	Table: Name, Total Visits, Progress bar, Rewards Redeemed, Last Visit date
+	•	Sort options: Most visits, Most recent, Closest to next reward
+Leads to: This is a read-only view in V1 — no actions taken from this tab.
+
+Screen 6 — Analytics Tab
+/shop/dashboard (tab: analytics)
+Purpose: Trend view to help the owner judge whether the loyalty program is working.
+Key elements:
+	•	Bar chart: daily visit count, last 7 days
+	•	Retention breakdown: % of customers at 1 visit / 2-4 visits / 5+ visits
+	•	Top 5 customers by total visits
+Leads to: Read-only view. No further navigation from here.
+
+Screen 7 — Private Feedback Inbox
+/shop/dashboard (section, below tabs)
+Purpose: Always-visible section showing critical feedback that was kept off the shop's public Google profile.
+Key elements:
+	•	List of 1-3 star submissions: star rating, feedback text, date
+	•	No customer name shown — feedback is anonymous to the owner
+Leads to: Read-only. This is the owner's only visibility into negative feedback in V1.
+
+9. End-to-End Flow Summary
+The complete path from a brand-new customer's first scan to a redeemed reward, across both apps:
+CUSTOMER APP                                    SHOP DASHBOARD
+-------------                                    --------------
+Sign up (OTP)
+   |
+   v
+Welcome screen
+   |
+   v
+Home  <-----------------------------------+
+   |                                       |
+   v                                       |
+Scan QR  ---- POST /api/visit ----+         |
+                                   |         |
+         +-------------------------+         |
+         |          |          |             |
+    Connected!  Welcome   Already             |
+    (1st visit) back      visited today       |
+         |          |          |              |
+         +----------+----------+--------------+
+                    |
+          (every 5th visit instead)
+                    |
+                    v
+         Scratch card unlocked
+                    |
+                    v
+         Tap to reveal reward
+         + 4-digit code shown
+                    |
+   shows code to staff in person
+                    |                          |
+                    +------------------------->|
+                                          Verify Code tab
+                                          staff types code
+                                                |
+                                          POST /api/verify-code
+                                                |
+                                       valid -> redeemed
+                                       invalid -> error shown
+
+10. Notes for Implementation
+	•	Screens 4a-4d are not separate routes — they are different rendered states of the same /scan confirmation overlay, branched purely on the status field returned by POST /api/visit.
+	•	The Shop Dashboard's four tabs (Overview, Verify Code, Customers, Analytics) should be implemented as client-side tab state on one page, not four separate routes, to avoid unnecessary reloads during a staff member's busy counter workflow.
+	•	Screen 5 (Shop Profile)'s “Rate us on Google” button must check customer_shop.review_submitted before rendering — if true, show a disabled state (“Review already submitted”) instead of the button.
+	•	All confirmation overlays (4a-4d, and the redemption success state) should be dismissible back to Home without requiring a full page reload, to keep the scan-to-home loop fast for repeat daily use.
